@@ -1,0 +1,129 @@
+version: '3.8'
+
+services:
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    container_name: contact-center-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: secret
+      MYSQL_DATABASE: contact_center
+      MYSQL_USER: contact_center
+      MYSQL_PASSWORD: secret
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - contact-center-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-psecret"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: contact-center-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - contact-center-network
+
+  # Laravel Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: ../docker/php/Dockerfile
+    container_name: contact-center-backend
+    working_dir: /var/www
+    volumes:
+      - ./backend:/var/www:delegated
+      - backend_vendor:/var/www/vendor
+    environment:
+      - APP_ENV=local
+      - APP_DEBUG=true
+      - DB_HOST=mysql
+      - DB_DATABASE=contact_center
+      - DB_USERNAME=contact_center
+      - DB_PASSWORD=secret
+      - REDIS_HOST=redis
+      - CACHE_DRIVER=redis
+      - QUEUE_CONNECTION=redis
+      - SESSION_DRIVER=redis
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - contact-center-network
+
+  # Nginx Web Server
+  nginx:
+    image: nginx:alpine
+    container_name: contact-center-nginx
+    ports:
+      - "8000:80"
+    volumes:
+      - ./backend:/var/www
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - backend
+    networks:
+      - contact-center-network
+
+  # Queue Worker
+  queue:
+    build:
+      context: ./backend
+      dockerfile: ../docker/php/Dockerfile
+    container_name: contact-center-queue
+    working_dir: /var/www
+    volumes:
+      - ./backend:/var/www:delegated
+      - backend_vendor:/var/www/vendor
+    command: php artisan queue:work --sleep=3 --tries=3
+    environment:
+      - APP_ENV=local
+      - DB_HOST=mysql
+      - DB_DATABASE=contact_center
+      - DB_USERNAME=contact_center
+      - DB_PASSWORD=secret
+      - REDIS_HOST=redis
+      - QUEUE_CONNECTION=redis
+    depends_on:
+      - backend
+    networks:
+      - contact-center-network
+    restart: unless-stopped
+
+  # React Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../docker/node/Dockerfile
+    container_name: contact-center-frontend
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:8000/api
+      - VITE_WS_URL=ws://localhost:6001
+    networks:
+      - contact-center-network
+    command: npm run dev -- --host
+
+volumes:
+  mysql_data:
+    driver: local
+  backend_vendor:
+    driver: local
+
+networks:
+  contact-center-network:
+    driver: bridge

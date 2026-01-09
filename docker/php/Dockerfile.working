@@ -1,0 +1,65 @@
+FROM php:8.2-fpm
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    libpng-dev \
+    libonig-dev \
+    libxml2-dev \
+    libzip-dev \
+    zip \
+    unzip \
+    && docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd zip \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install Redis extension
+RUN pecl install redis && docker-php-ext-enable redis
+
+# Install Composer
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+# Disable Composer platform check globally
+ENV COMPOSER_ALLOW_SUPERUSER=1
+ENV COMPOSER_IGNORE_PLATFORM_REQS=1
+
+WORKDIR /var/www
+
+# Copy composer files
+COPY composer.json ./
+
+# Install dependencies without platform checks
+RUN composer install \
+    --no-dev \
+    --no-scripts \
+    --no-autoloader \
+    --prefer-dist \
+    --ignore-platform-reqs \
+    --no-interaction
+
+# Copy application files
+COPY . .
+
+# Generate optimized autoload with platform check disabled
+RUN composer dump-autoload \
+    --optimize \
+    --no-dev \
+    --classmap-authoritative \
+    --ignore-platform-reqs
+
+# Create required directories
+RUN mkdir -p \
+    storage/app/public \
+    storage/framework/cache/data \
+    storage/framework/sessions \
+    storage/framework/views \
+    storage/logs \
+    bootstrap/cache
+
+# Set permissions
+RUN chmod -R 775 storage bootstrap/cache \
+    && chown -R www-data:www-data /var/www
+
+EXPOSE 9000
+
+CMD ["php-fpm"]

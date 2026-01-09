@@ -1,0 +1,54 @@
+FROM php:8.2-fpm
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    libpng-dev \
+    libonig-dev \
+    libxml2-dev \
+    libzip-dev \
+    zip \
+    unzip \
+    && docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd zip \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Redis extension
+RUN pecl install redis && docker-php-ext-enable redis
+
+# Install Composer
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+# Set working directory
+WORKDIR /var/www
+
+# Copy only composer.json first (for better caching)
+COPY composer.json ./
+
+# Install dependencies without scripts or lock file
+RUN composer install --no-dev --no-scripts --prefer-dist --ignore-platform-reqs --no-interaction
+
+# Copy rest of application
+COPY . .
+
+# Generate autoload
+RUN composer dump-autoload --optimize --no-dev
+
+# Create required directories
+RUN mkdir -p storage/app/public \
+    storage/framework/cache/data \
+    storage/framework/sessions \
+    storage/framework/views \
+    storage/logs \
+    bootstrap/cache \
+    && chmod -R 775 storage \
+    && chmod -R 775 bootstrap/cache
+
+# Set ownership
+RUN chown -R www-data:www-data /var/www
+
+# Expose port
+EXPOSE 9000
+
+CMD ["php-fpm"]

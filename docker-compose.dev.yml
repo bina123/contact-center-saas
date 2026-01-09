@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    container_name: contact-center-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-secret}
+      MYSQL_DATABASE: ${DB_DATABASE:-contact_center}
+      MYSQL_USER: ${DB_USERNAME:-contact_center}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-secret}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - contact-center-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_PASSWORD:-secret}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: contact-center-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - contact-center-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Laravel Backend (without build - use local PHP for development)
+  # backend:
+  #   build:
+  #     context: ./backend
+  #     dockerfile: ../docker/php/Dockerfile
+  #   container_name: contact-center-backend
+  #   working_dir: /var/www
+  #   volumes:
+  #     - ./backend:/var/www
+  #   environment:
+  #     - DB_HOST=mysql
+  #     - DB_DATABASE=${DB_DATABASE:-contact_center}
+  #     - DB_USERNAME=${DB_USERNAME:-contact_center}
+  #     - DB_PASSWORD=${DB_PASSWORD:-secret}
+  #     - REDIS_HOST=redis
+  #   depends_on:
+  #     mysql:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #   networks:
+  #     - contact-center-network
+
+  # React Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../docker/node/Dockerfile
+    container_name: contact-center-frontend
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:8000/api
+      - VITE_WS_URL=ws://localhost:6001
+    networks:
+      - contact-center-network
+    command: npm run dev -- --host
+
+volumes:
+  mysql_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  contact-center-network:
+    driver: bridge
